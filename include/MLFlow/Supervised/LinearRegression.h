@@ -1,8 +1,10 @@
 #pragma once
+
 #include <Eigen/Dense>
 #include <omp.h>
 #include <vector>
 #include <stdexcept>
+#include <utility>
 
 namespace MLflow {
     namespace Supervised {
@@ -25,39 +27,70 @@ namespace MLflow {
                 Bias = W_full.bottomRows(1);
             }
 
-        public:
-            LinearRegression(const std::vector<std::vector<X_type>>& X_data,
-                             const std::vector<std::vector<y_type>>& y_data) {
-                int rows = X_data.size();
-                int cols = X_data[0].size();
-                int outputs = y_data[0].size();
+            // Copy-based conversion
+            Matrix to_eigen_matrix(const std::vector<std::vector<X_type>>& vec) const {
+                int rows = vec.size();
+                int cols = vec[0].size();
+                Matrix mat(rows, cols);
 
-                Matrix X_mat(rows, cols);
-                Matrix y_mat(rows, outputs);
+                #pragma omp parallel for
+                for (int i = 0; i < rows; ++i)
+                    for (int j = 0; j < cols; ++j)
+                        mat(i, j) = vec[i][j];
+
+                return mat;
+            }
+
+            // Move-based conversion (rvalue overload)
+            Matrix to_eigen_matrix(std::vector<std::vector<X_type>>&& vec) const {
+                int rows = vec.size();
+                int cols = vec[0].size();
+                Matrix mat(rows, cols);
 
                 #pragma omp parallel for
                 for (int i = 0; i < rows; ++i) {
+                    auto&& row = std::move(vec[i]);
                     for (int j = 0; j < cols; ++j)
-                        X_mat(i, j) = X_data[i][j];
-                    for (int k = 0; k < outputs; ++k)
-                        y_mat(i, k) = y_data[i][k];
+                        mat(i, j) = std::move(row[j]);
                 }
 
+                return mat;
+            }
+
+        public:
+            // Constructor (copy)
+            LinearRegression(const std::vector<std::vector<X_type>>& X_data,
+                             const std::vector<std::vector<y_type>>& y_data) {
+                Matrix X_mat = to_eigen_matrix(X_data);
+                Matrix y_mat = to_eigen_matrix(y_data);
                 train(X_mat, y_mat);
             }
 
+            // Constructor (move)
+            LinearRegression(std::vector<std::vector<X_type>>&& X_data,
+                             std::vector<std::vector<y_type>>&& y_data) {
+                Matrix X_mat = to_eigen_matrix(std::move(X_data));
+                Matrix y_mat = to_eigen_matrix(std::move(y_data));
+                train(X_mat, y_mat);
+            }
+
+            // Constructor (Eigen)
+            LinearRegression(const Matrix& X_mat, const Matrix& y_mat) {
+                train(X_mat, y_mat);
+            }
+
+            // Predict one sample
             std::vector<y_type> predict(const std::vector<X_type>& X_test) const {
                 if (X_test.size() != Weights.rows()) {
                     throw std::invalid_argument("Input size does not match number of features.");
                 }
 
-                Eigen::Map<const Eigen::Matrix<X_type, Eigen::Dynamic, 1>> x_vec(X_test.data(), X_test.size());
-                Eigen::Matrix<X_type, Eigen::Dynamic, 1> result = Weights.transpose() * x_vec + Bias;
-
+                Eigen::Map<const Vector> x_vec(X_test.data(), X_test.size());
+                Vector result = Weights.transpose() * x_vec + Bias;
                 return std::vector<y_type>(result.data(), result.data() + result.size());
             }
 
-            // Batch Prediction
+            // Predict a batch
             std::vector<std::vector<y_type>> predict(const std::vector<std::vector<X_type>>& X_test_batch) const {
                 int N = X_test_batch.size();
                 int F = Weights.rows();
@@ -70,9 +103,8 @@ namespace MLflow {
                     if (X_test_batch[i].size() != F)
                         throw std::invalid_argument("Inconsistent input feature size at row " + std::to_string(i));
 
-                    Eigen::Map<const Eigen::Matrix<X_type, Eigen::Dynamic, 1>> x_vec(X_test_batch[i].data(), F);
-                    Eigen::Matrix<X_type, Eigen::Dynamic, 1> result = Weights.transpose() * x_vec + Bias;
-
+                    Eigen::Map<const Vector> x_vec(X_test_batch[i].data(), F);
+                    Vector result = Weights.transpose() * x_vec + Bias;
                     for (int j = 0; j < M; ++j)
                         predictions[i][j] = result(j);
                 }
@@ -82,5 +114,6 @@ namespace MLflow {
 
             ~LinearRegression() = default;
         };
+
     }
 }
