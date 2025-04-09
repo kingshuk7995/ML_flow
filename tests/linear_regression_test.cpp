@@ -32,7 +32,7 @@ int main() {
         LinearRegression<> model(X_data, y_data);
         auto end = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double, std::milli> train_time = end - start;
-        std::cout << "🕒 Training Time: " << train_time.count() << " ms\n";
+        std::cout << "Training Time: " << train_time.count() << " ms\n";
         auto predictions = model.predict(X_data);
 
         double mse = 0;
